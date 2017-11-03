@@ -34,8 +34,6 @@ basestation_inventory = eval(redis_hook_2.get("basestation_capacities"))
 #############################################SS UL ISSUE###############################################################################################
 def calculate_wimax_utilization(wimax_util_data,wimax_pmp_bandwidth,capacity):
 
-
-
 	if wimax_pmp_bandwidth and isinstance(wimax_pmp_bandwidth,basestring):
 		wimax_pmp_bandwidth = eval(wimax_pmp_bandwidth)
 	if wimax_util_data and isinstance(wimax_util_data,basestring):
@@ -175,16 +173,31 @@ def calculate_radwin5k_bs_and_ss_dyn_tl_kpi(utilization):
 def calculate_backhaul_utilization(utilization,hostname): #hostname is required for backhaul devices so as to get capacity for the devices
 	#capacity=backhaul_inventory.get(hostname).get('port_wise_capacity')
 	device_port = backhaul_inventory.get(hostname)
-	capacity = device_port.get("capacity")
-	if utilization != None:
-		print utilization
-		utilization = dict(utilization)
+	if device_port and device_port != None:
+		capacity = device_port.get("capacity")
+	else:
+		return None
+	utilization=eval(str(utilization))
+	
+	if utilization and utilization != None and utilization != []:
+		try:
+
+			utilization = dict(utilization)
+		except Exception:
+			print "We have an exception while getting utilizatio %s"%(utilization)
+			
 		all_ports_kpi_utilization = {}
 		for port_name in utilization.keys():
 			data_source = port_name+"_kpi"
 			current_util = utilization.get(port_name)						 
 			try:
-				utilization_kpi = (float(current_util)/float(capacity.get(port_name))) *100
+				
+				if capacity.get(port_name) and capacity.get(port_name) != None:
+					capacity_key = port_name 
+				else:
+					capacity_key = port_name.replace("_","/")
+				#print current_util,capacity.get(capacity_key),capacity_key,capacity
+				utilization_kpi = (float(current_util)/float(capacity.get(capacity_key))) *100
 				utilization_kpi = round(utilization_kpi,2)
 				all_ports_kpi_utilization.update({data_source:utilization_kpi})
 			except Exception,e:
@@ -198,7 +211,11 @@ def calculate_backhaul_utilization(utilization,hostname): #hostname is required 
 def calculate_mrotek_utilization(utilization,hostname): #hostname is required for backhaul devices so as to get capacity for the devices
 	#capacity=backhaul_inventory.get(hostname).get('port_wise_capacity')
 	device_port = backhaul_inventory.get(hostname)
-	capacity = device_port.get("capacity")
+	try:
+		capacity = device_port.get("capacity")
+	except Exception:
+		return 0
+	
 	if utilization != None:
 		utilization = utilization.split(',')
 		port_name = "fe_"+utilization[1]
@@ -219,9 +236,17 @@ def calculate_mrotek_utilization(utilization,hostname): #hostname is required fo
 
 
 
+
+
 def calculate_ptp_utilization(utilization,hostname):
 	if utilization and utilization != None and hostname:
-		qos_bandwidth = basestation_inventory.get(hostname).get('qos_bandwidth')
+		try:
+			qos_bandwidth = basestation_inventory.get(hostname).get('qos_bandwidth')
+		except AttributeError:
+			qos_bandwidth = 10000
+		except Exception:
+			qos_bandwidth = 10000
+
 		if qos_bandwidth != None:
 			utilization_kpi = (float(utilization)/float(qos_bandwidth/1024.0)) * 100
 			utilization_kpi = round(utilization_kpi,2)

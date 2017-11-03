@@ -98,25 +98,36 @@ class RedisKeyView(BaseView):
         # in this example, put your test_plugin/test.html template at airflow/plugins/templates/test_plugin/test.htm
         redis_hook_6 = RedisHook(redis_conn_id="redis_hook_6")
         redis_hook_7 = RedisHook(redis_conn_id="redis_hook_7")
+        redis_hook_10 =  RedisHook(redis_conn_id="redis_hook_util_10")
         ulissue_keys = redis_hook_6.get_keys("aggregated_*")
         provis_keys = redis_hook_7.get_keys("aggregated_*")
+        utilization_keys = redis_hook_10.get_keys("aggregated_*")
         data_to_page_ul = []
         data_to_page_provis = []
+        data_to_page_util = []
         attributes = []
         combined_data = []
-
+        
         for key in ulissue_keys:
             data = eval(redis_hook_6.get(key))
             for device_dict in data:
                 data_to_page_ul.append(device_dict)
-
+        print "Crossed 1"
         for key in provis_keys:
             data = eval(redis_hook_7.get(key))
             for device_dict in data:
                 data_to_page_provis.append(device_dict)
-    
+        print "Crossed 2"
+        for key in utilization_keys:
+            data = eval(redis_hook_10.get(key))
+            for device_dict in data:
+                data_to_page_util.append(device_dict)
+        print len(data_to_page_util)
+        print "Crossed 3"
+        
         data_to_page_ul.extend(data_to_page_provis)
-            
+        data_to_page_ul.extend(data_to_page_util)
+        print "Total Records : %s"%len(data_to_page_ul)    
         return self.render("rules_plugin/rules.html",attributes=attributes,data=data_to_page_ul)
 
 

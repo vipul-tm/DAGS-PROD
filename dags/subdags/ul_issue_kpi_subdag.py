@@ -171,8 +171,7 @@ child_dag_name,
 					bs_kpi_dict['max_value']=bs_kpi_dict['current_value']
 					bs_kpi_dict['avg_value']=bs_kpi_dict['current_value']
 
-					if bs_kpi_dict['ip_address'] == '10.157.206.3':
-						logging.info(bs_kpi_dict)
+					
 
 					if bs_kpi_dict['current_value'] not in ERROR_FOR_DEVICE_OMITTED:
 						bs_devices_list.append(bs_kpi_dict.copy())	

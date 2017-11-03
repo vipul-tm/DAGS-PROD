@@ -67,6 +67,7 @@ UPDATE_TAIL = """
 ERROR_DICT ={404:'Device not found yet',405:'No SS Connected to BS-BS is not skipped'}
 ERROR_FOR_DEVICE_OMITTED = [404]
 kpi_rules = eval(Variable.get("kpi_rules"))
+DEBUG = False
 sv_to_ds_mapping = {}
 
 def process_utilization_kpi(
@@ -126,9 +127,8 @@ child_dag_name,
 				}
 
 		ss_data =redis_hook_util_10.rget("calculated_utilization_%s_%s"%(device_type,site_name))
-		cur_processing_time = backtrack_x_min(time.time(),300) # this is used to rewind the time to previous multiple of 5 value so that kpi can be shown accordingly
+		cur_processing_time = backtrack_x_min(time.time(),300) + 120 # this is used to rewind the time to previous multiple of 5 value so that kpi can be shown accordingly
 		ss_devices_list = []
-		pprint(sv_to_ds_mapping)
 		for ss_device in ss_data:
 			ss_device = eval(ss_device)
 			hostname = ss_device.get('hostname')
@@ -257,9 +257,14 @@ child_dag_name,
 					capacity = None
 					if "capacity" in service_attributes.keys():
 						capacity =  service_attributes.get("capacity")
-
-					devices[service] = eval(kpi_rules.get(service).get('formula'))
-									
+					try:
+						formula = kpi_rules.get(service).get('formula')
+						
+						devices[service] = eval(formula)
+						
+					except Exception:
+						print "Exception in calculating data"
+						pass			
 				else:
 					continue
 
@@ -309,7 +314,8 @@ child_dag_name,
 				python_callable=aggregate_utilization_data,
 				params={"machine_name":each_machine_name,"technology":ss_name},
 				dag=utilization_kpi_subdag_dag,
-				queue = celery_queue
+				queue = celery_queue,
+				trigger_rule = 'all_done'
 				)
 			aggregate_dependency_ss[each_machine_name] = aggregate_utilization_data_ss_task
 
@@ -323,31 +329,32 @@ child_dag_name,
 			UPDATE_QUERY = UPDATE_QUERY.replace('\n','')
 
 			#ss_name == Device_type
-			insert_data_in_mysql = MySqlLoaderOperator(
-				task_id ="upload_data_%s"%(each_machine_name),
-				dag=utilization_kpi_subdag_dag,
-				query=INSERT_QUERY,
-				#data="",
-				redis_key="aggregated_utilization_%s_%s"%(each_machine_name,ss_name),
-				redis_conn_id = "redis_hook_util_10",
-				mysql_conn_id='mysql_uat',
-				queue = celery_queue,
-				trigger_rule = 'all_done'
-				)
-			update_data_in_mysql = MySqlLoaderOperator(
-				task_id ="update_data_%s"%(each_machine_name),
-				query=UPDATE_QUERY	,
-				#data="",
-				redis_key="aggregated_utilization_%s_%s"%(each_machine_name,ss_name),
-				redis_conn_id = "redis_hook_util_10",
-				mysql_conn_id='mysql_uat',
-				dag=utilization_kpi_subdag_dag,
-				queue = celery_queue,
-				trigger_rule = 'all_done'
-				)
-		
-			update_data_in_mysql << aggregate_utilization_data_ss_task
-			insert_data_in_mysql << aggregate_utilization_data_ss_task
+			if not DEBUG:
+				insert_data_in_mysql = MySqlLoaderOperator(
+					task_id ="upload_data_%s"%(each_machine_name),
+					dag=utilization_kpi_subdag_dag,
+					query=INSERT_QUERY,
+					#data="",
+					redis_key="aggregated_utilization_%s_%s"%(each_machine_name,ss_name),
+					redis_conn_id = "redis_hook_util_10",
+					mysql_conn_id='mysql_uat',
+					queue = celery_queue,
+					trigger_rule = 'all_done'
+					)
+				update_data_in_mysql = MySqlLoaderOperator(
+					task_id ="update_data_%s"%(each_machine_name),
+					query=UPDATE_QUERY	,
+					#data="",
+					redis_key="aggregated_utilization_%s_%s"%(each_machine_name,ss_name),
+					redis_conn_id = "redis_hook_util_10",
+					mysql_conn_id='mysql_uat',
+					dag=utilization_kpi_subdag_dag,
+					queue = celery_queue,
+					trigger_rule = 'all_done'
+					)
+			
+				update_data_in_mysql << aggregate_utilization_data_ss_task
+				insert_data_in_mysql << aggregate_utilization_data_ss_task
 
 
 	for each_site_name in ss_tech_sites:

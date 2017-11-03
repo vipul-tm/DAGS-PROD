@@ -148,7 +148,7 @@
             var data_list = [];
             if (page == "testview"){
                 var a = {{ data|tojson|safe }};
-                //console.log(a)
+                //console.log(a.length)
                 
                 var device_dict={
                     'device_type':'unknown',
@@ -188,8 +188,9 @@
            $(".login-title").html(page)
            }
            else if (page == "rediskeyview"){
-                     
+            console.log("Loading Page")         
             data_list = {{ data|tojson|safe }};
+            console.log(data_list.length)
            $(".login-title").html("KPI Data")
            }
             rule_table.fnAddData(data_list)
