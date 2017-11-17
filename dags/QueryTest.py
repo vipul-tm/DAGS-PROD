@@ -35,7 +35,7 @@ def get_from_socket(site_name, query):
     machine = site_name[:-8]
     #socket_ip = _LIVESTATUS[machine]['host']
     #socket_port = _LIVESTATUS[machine][site_name]['port']
-    s.connect(('115.114.79.37', 6557))
+    s.connect(('115.114.79.47', 6660))
     #s.connect(socket_path)
     s.settimeout(60.0)
     s.send(query)

@@ -39,7 +39,9 @@ default_args = {
 	# 'end_date': datetime(2016, 1, 1),
 }
 redis_hook_7 = RedisHook(redis_conn_id="redis_hook_7")
-memc_con = MemcacheHook(memc_cnx_id = 'memc_cnx')
+memc_con_cluster = MemcacheHook(memc_cnx_id = 'memc_cnx')
+vrfprv_memc_con  = MemcacheHook(memc_cnx_id = 'vrfprv_memc_cnx')
+pub_memc_con  = MemcacheHook(memc_cnx_id = 'pub_memc_cnx')
 INSERT_HEADER = "INSERT INTO %s.performance_utilization"
 INSERT_TAIL = """
 (machine_name,current_value,service_name,avg_value,max_value,age,min_value,site_name,data_source,critical_threshold,device_name,severity,sys_timestamp,ip_address,warning_threshold,check_timestamp,refer ) 
@@ -163,6 +165,15 @@ child_dag_name,
 		# except Exception:
 		# 	logging.info("No data found for %s"%(site_name))
 		# print "+++++++++++++++++++++++++"
+		if "vrfprv" in site_name:			
+			memc_con = vrfprv_memc_con
+				
+		elif "pub" in site_name:
+			memc_con = pub_memc_con
+		else:
+			memc_con = memc_con_cluster
+
+
 		if site_name not in hostnames_ss_per_site.keys():
 			logging.warning("No SS devices found for %s"%(site_name))
 			return 1
@@ -174,7 +185,8 @@ child_dag_name,
 			ss_data_dict['ipaddress'] = ip_address
 			
 			
-			for service in provision_service_mapping.get(ss_name):			
+			for service in provision_service_mapping.get(ss_name):
+				
 				ss_data_dict[service] = memc_con.get("provis:%s:%s"%(host_name,service))
 			
 			all_ss_data.append(ss_data_dict.copy())

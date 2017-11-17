@@ -34,7 +34,8 @@ config = eval(Variable.get('system_config'))
 redis_hook_5 = RedisHook(redis_conn_id="redis_hook_2")
 
 memc_con = MemcacheHook(memc_cnx_id = 'memc_cnx')
-
+vrfprv_memc_con  = MemcacheHook(memc_cnx_id = 'vrfprv_memc_cnx')
+pub_memc_con  = MemcacheHook(memc_cnx_id = 'pub_memc_cnx')
 def create_prev_state(**kwargs):
     
     
@@ -188,6 +189,12 @@ def create_ul_issue_kpi_prev_state():
             
             try:
                 old_states =memc_con.get(kpi_key)
+                if old_states == None:
+                    old_states = vrfprv_memc_con.get(kpi_key)
+                if old_states == None:
+                    old_states = pub_memc_con.get(kpi_key)
+
+
                 if old_states != None:
                     old_severity = old_states.split(",")[0]
                     old_severity_since = old_states.split(",")[1]
@@ -241,6 +248,11 @@ def create_provis_kpi_prev_state():
             
             try:
                 old_states =memc_con.get(kpi_key)
+                if old_states == None:
+                    old_states = vrfprv_memc_con.get(kpi_key)
+                if old_states == None:
+                    old_states = pub_memc_con.get(kpi_key)
+
                 if old_states != None:
                     old_severity = old_states.split(",")[0]
                     old_severity_since = old_states.split(",")[1]
@@ -294,6 +306,12 @@ def create_utilization_kpi_prev_state():
                 prev_dict_key = "%s_%s"%(hostname,service)
                 try:
                     old_states =memc_con.get(kpi_key)
+                    
+                    if old_states == None:
+                        old_states = vrfprv_memc_con.get(kpi_key)
+                    if old_states == None:
+                        old_states = pub_memc_con.get(kpi_key)
+
                     if old_states != None:
                         old_severity = old_states.split(",")[0]
                         old_severity_since = old_states.split(",")[1]

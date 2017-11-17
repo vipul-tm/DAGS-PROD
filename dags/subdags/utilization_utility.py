@@ -16,7 +16,7 @@ redis_hook_7 = RedisHook(redis_conn_id="redis_hook_7")
 
 rules = eval(Variable.get('rules'))
 util_tech = eval(Variable.get('utilization_kpi_technologies'))
-memc_con = MemcacheHook(memc_cnx_id = 'memc_cnx')
+
 operators = eval(Variable.get('operators'))
 service_state_type = ['warning','critical']
 all_device_type_age_dict ={}
@@ -92,6 +92,7 @@ def calculate_cambium_ss_utilization(cambium_ul_rssi,cambium_dl_rssi,cambium_dl_
 def calculate_radwin5k_ss_utilization(utilization):
 
 	if utilization != None:
+		utilization = float(utilization)
 		utilization_kpi = (float(utilization)/10)
 		utilization_kpi = round(utilization_kpi,2)
 		
@@ -164,9 +165,12 @@ def calculate_radwin5kjet_bs_utilization(utilization,channel_bandwidth,util_type
 
 def calculate_radwin5k_bs_and_ss_dyn_tl_kpi(utilization):
 	if utilization != None:
+
+		utilization = float(utilization)
 		utilization = round(utilization,2)
 		utilization_kpi = (utilization*63)/100  # Dyncamic TL
 		utilization_kpi = round(utilization_kpi,2)
+		return utilization_kpi 
 	else:
 		return None
 
@@ -196,10 +200,16 @@ def calculate_backhaul_utilization(utilization,hostname): #hostname is required 
 					capacity_key = port_name 
 				else:
 					capacity_key = port_name.replace("_","/")
-				#print current_util,capacity.get(capacity_key),capacity_key,capacity
-				utilization_kpi = (float(current_util)/float(capacity.get(capacity_key))) *100
-				utilization_kpi = round(utilization_kpi,2)
-				all_ports_kpi_utilization.update({data_source:utilization_kpi})
+
+				if capacity.get(capacity_key) and capacity.get(capacity_key) != None:
+					#print current_util,capacity.get(capacity_key),capacity_key,capacity
+					utilization_kpi = (float(current_util)/float(capacity.get(capacity_key))) *100
+					utilization_kpi = round(utilization_kpi,2)
+					all_ports_kpi_utilization.update({data_source:utilization_kpi})
+				else:
+					utilization_kpi = (float(current_util)/float(1000)) *100
+					utilization_kpi = round(utilization_kpi,2)
+					all_ports_kpi_utilization.update({data_source:utilization_kpi})
 			except Exception,e:
 				all_ports_kpi_utilization.update({data_source:None})
 				continue

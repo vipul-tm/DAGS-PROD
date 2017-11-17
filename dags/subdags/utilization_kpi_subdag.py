@@ -48,7 +48,11 @@ default_args = {
 	# 'end_date': datetime(2016, 1, 1),
 }
 redis_hook_util_10 = RedisHook(redis_conn_id="redis_hook_util_10")
-memc_con = MemcacheHook(memc_cnx_id = 'memc_cnx')
+memc_con_cluster = MemcacheHook(memc_cnx_id = 'memc_cnx')
+vrfprv_memc_con  = MemcacheHook(memc_cnx_id = 'vrfprv_memc_cnx')
+pub_memc_con  = MemcacheHook(memc_cnx_id = 'pub_memc_cnx')
+
+
 INSERT_HEADER = "INSERT INTO %s.performance_utilization"
 INSERT_TAIL = """
 (machine_name,current_value,service_name,avg_value,max_value,age,min_value,site_name,data_source,critical_threshold,device_name,severity,sys_timestamp,ip_address,warning_threshold,check_timestamp,refer ) 
@@ -69,6 +73,7 @@ ERROR_FOR_DEVICE_OMITTED = [404]
 kpi_rules = eval(Variable.get("kpi_rules"))
 DEBUG = False
 sv_to_ds_mapping = {}
+O7_CALC_Q = "calculation_q"
 
 def process_utilization_kpi(
 parent_dag_name, 
@@ -190,6 +195,14 @@ child_dag_name,
 		site_name = kwargs.get("params").get("site_name")
 		device_type = kwargs.get("params").get("technology")
 		utilization_attributes = kwargs.get("params").get("attributes")
+		if "vrfprv" in site_name:			
+			memc_con = vrfprv_memc_con
+				
+		elif "pub" in site_name:
+			memc_con = pub_memc_con
+		else:
+			memc_con = memc_con_cluster
+			
 		ss_data_dict = {}
 		all_ss_data = []
 		if site_name not in hostnames_ss_per_site.keys():
@@ -314,7 +327,7 @@ child_dag_name,
 				python_callable=aggregate_utilization_data,
 				params={"machine_name":each_machine_name,"technology":ss_name},
 				dag=utilization_kpi_subdag_dag,
-				queue = celery_queue,
+				queue = O7_CALC_Q,
 				trigger_rule = 'all_done'
 				)
 			aggregate_dependency_ss[each_machine_name] = aggregate_utilization_data_ss_task
@@ -338,7 +351,7 @@ child_dag_name,
 					redis_key="aggregated_utilization_%s_%s"%(each_machine_name,ss_name),
 					redis_conn_id = "redis_hook_util_10",
 					mysql_conn_id='mysql_uat',
-					queue = celery_queue,
+					queue = O7_CALC_Q,
 					trigger_rule = 'all_done'
 					)
 				update_data_in_mysql = MySqlLoaderOperator(
@@ -349,7 +362,7 @@ child_dag_name,
 					redis_conn_id = "redis_hook_util_10",
 					mysql_conn_id='mysql_uat',
 					dag=utilization_kpi_subdag_dag,
-					queue = celery_queue,
+					queue = O7_CALC_Q,
 					trigger_rule = 'all_done'
 					)
 			
@@ -377,7 +390,7 @@ child_dag_name,
 				python_callable=calculate_utilization_data_ss,
 				params={"site_name":each_site_name,"technology":ss_name,'attributes':utilization_attributes},
 				dag=utilization_kpi_subdag_dag,
-				queue = celery_queue,
+				queue = O7_CALC_Q,
 				
 				)
 
