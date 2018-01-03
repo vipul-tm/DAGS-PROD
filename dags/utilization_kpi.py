@@ -43,14 +43,14 @@ Q_OSPF = "poller_queue"
 Q_PING = "poller_queue"
 
 PARENT_DAG_NAME = "UTILIZATION_KPI"
-utilization_kpi_dag=DAG(dag_id=PARENT_DAG_NAME, default_args=default_args, schedule_interval='*/5 * * * *')
+utilization_kpi_dag=DAG(dag_id=PARENT_DAG_NAME, default_args=default_args, schedule_interval='4-59/5 * * * *')
 
 redis_hook_util_10 = RedisHook(redis_conn_id="redis_hook_util_10")
 redis_hook_2 = RedisHook(redis_conn_id="redis_hook_2")
 
 
 technologies = eval(Variable.get('utilization_kpi_technologies'))
-machines = eval(Variable.get("system_config_o1"))
+machines = eval(Variable.get("system_config_no_o1"))
 devices = eval(Variable.get('hostmk.dict.site_mapping'))
 attributes = eval(Variable.get('utilization_kpi_attributes'))
 

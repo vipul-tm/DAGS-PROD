@@ -52,7 +52,7 @@ down_devices = []
 memc_con_cluster = MemcacheHook(memc_cnx_id = 'memc_cnx')
 vrfprv_memc_con  = MemcacheHook(memc_cnx_id = 'vrfprv_memc_cnx')
 pub_memc_con  = MemcacheHook(memc_cnx_id = 'pub_memc_cnx')
-
+set_dependency_for_ss_on_all_machines = False
 INSERT_HEADER = "INSERT INTO %s.performance_utilization"
 INSERT_TAIL = """
 (machine_name,current_value,service_name,avg_value,max_value,age,min_value,site_name,data_source,critical_threshold,device_name,severity,sys_timestamp,ip_address,warning_threshold,check_timestamp,refer ) 
@@ -112,11 +112,11 @@ child_dag_name,
 		return combined_site_data
 
 	def format_bs_data(**kwargs):
-		site_name = kwargs.get("params").get("site_name")
-		machine_name = site_name.split("_")[0]
+		machine_name = kwargs.get("params").get("machine_name")
+		
 		device_type = kwargs.get("params").get("technology")
 		
-		bs_data = redis_hook_6.rget("calculated_bs_ul_issue_%s_%s"%(device_type,site_name))
+		bs_data = redis_hook_6.rget("calculated_bs_ul_issue_%s_%s"%(device_type,machine_name))
 		
 		bs_kpi_dict = {
 				'site_name': 'unknown' ,
@@ -189,9 +189,9 @@ child_dag_name,
 
 	#To create SS dict
 	def format_ss_data(**kwargs):
-		site_name = kwargs.get("params").get("site_name")
+		machine_name = kwargs.get("params").get("machine_name")
 		device_type = kwargs.get("params").get("technology")
-		machine_name = ""
+		
 		ss_kpi_dict = {
 				'site_name': 'unknown' ,
 				'device_name': 'unknown',
@@ -212,7 +212,7 @@ child_dag_name,
 				'machine_name':'unknown'
 				}
 
-		ss_data =redis_hook_6.rget("calculated_ss_ul_issue_%s_%s"%(device_type,site_name))
+		ss_data =redis_hook_6.rget("calculated_ss_ul_issue_%s_%s"%(device_type,machine_name))
 		cur_processing_time = backtrack_x_min(time.time(),300) + 120 # this is used to rewind the time to previous multiple of 5 value so that kpi can be shown accordingly
 		ss_devices_list = []
 		for ss_device in ss_data:
@@ -254,6 +254,7 @@ child_dag_name,
 	def get_required_data_ss(**kwargs):
 		site_name = kwargs.get("params").get("site_name")
 		device_type = kwargs.get("params").get("technology")
+		machine_name = site_name.split("_")[0]
 		ss_data_dict = {}
 		all_ss_data = []
 		if "vrfprv" in site_name:			
@@ -273,6 +274,7 @@ child_dag_name,
 			ip_address = hostnames_dict.get("ip_address")
 			ss_data_dict['hostname'] = host_name
 			ss_data_dict['ipaddress'] = ip_address
+			ss_data_dict['site_name'] = site_name
 	
 			
 			for service in ul_issue_service_mapping.get(ss_name):
@@ -287,7 +289,7 @@ child_dag_name,
 			logging.info("No data Fetched ! Aborting Successfully")
 			return 0
 		try:
-			redis_hook_6.rpush("%s_%s"%(device_type,site_name),all_ss_data)
+			redis_hook_6.rpush("%s_%s"%(device_type,machine_name),all_ss_data)
 		except Exception:
 			logging.warning("Unable to insert ss data into redis")
 		
@@ -296,6 +298,7 @@ child_dag_name,
 	def get_required_data_bs(**kwargs):
 		site_name = kwargs.get("params").get("site_name")
 		device_type = kwargs.get("params").get("technology")
+		machine_name = site_name.split("_")[0]
 		bs_data_dict = {}
 		all_bs_data = []
 
@@ -320,6 +323,7 @@ child_dag_name,
 				bs_data_dict['ipaddress'] = ip_address
 				bs_data_dict['connectedss'] = connected_ss
 				bs_data_dict['device_type'] = device_type
+				bs_data_dict['site_name'] = site_name
 
 				for service in ul_issue_service_mapping.get(bs_name):
 					bs_data_dict[service] = memc_con.get("%s_%s"%(host_name,service))	
@@ -328,26 +332,26 @@ child_dag_name,
 		except TypeError:
 			logging.info("Unable to get site in the hostnames_per_site  variable")
 		if len(all_bs_data) > 0 :
-			redis_hook_6.rpush("%s_%s"%(device_type,site_name),all_bs_data)
+			redis_hook_6.rpush("%s_%s"%(device_type,machine_name),all_bs_data)
 		else:
 			logging.info("No Host Found at site")
 		
 				
 	def calculate_ul_issue_data_bs(**kwargs):
-		site_name = kwargs.get("params").get("site_name")
+		machine_name = kwargs.get("params").get("machine_name")
 		device_type = kwargs.get("params").get("technology")
-		devices_data_dict = redis_hook_6.rget("%s_%s"%(device_type,site_name))
+		
 		services = device_to_service_mapper.get(device_type)
 		ss_services = device_to_service_mapper.get(ss_name)
 		ss_data = get_calculated_ss_data()
-		bs_data = redis_hook_6.rget("%s_%s"%(device_type,site_name))
+		bs_data = redis_hook_6.rget("%s_%s"%(device_type,machine_name))
 		all_bs_calculated_data = []
 		bs_services = ul_issue_service_mapping.get(bs_name)
 		count =0
 
 		for base_statations in bs_data:
 			devices = eval(base_statations)
-			devices['site'] = site_name
+			devices['site'] = devices.get('site_name')
 			devices['device_type'] = device_type
 
 			for service in services:
@@ -374,11 +378,11 @@ child_dag_name,
 		
 		if len(all_bs_calculated_data) > 0:
 			try:
-				redis_hook_6.rpush("calculated_bs_ul_issue_%s_%s"%(device_type,site_name),all_bs_calculated_data)
+				redis_hook_6.rpush("calculated_bs_ul_issue_%s_%s"%(device_type,machine_name),all_bs_calculated_data)
 			except Exception:
 				logging.error("Unable to insert data in redis")
 		else:
-			logging.info("No Data found for site %s"%(site_name))
+			logging.info("No Data found for site %s"%(machine_name))
 
 		#here we will only calculate the ul_issue for the bs which is dependent on the SS
 
@@ -387,12 +391,12 @@ child_dag_name,
 
 
 	def calculate_ul_issue_data_ss(**kwargs):
-		site_name = kwargs.get("params").get("site_name")
+		machine_name = kwargs.get("params").get("machine_name")
 		device_type = kwargs.get("params").get("technology")
 
-		devices_data_dict = redis_hook_6.rget("%s_%s"%(device_type,site_name))
+		devices_data_dict = redis_hook_6.rget("%s_%s"%(device_type,machine_name))
 		if len(devices_data_dict) == 0:
-			logging.info("No Data found for ss %s "%(site_name))
+			logging.info("No Data found for ss %s "%(machine_name))
 			return 1
 
 		services = device_to_service_mapper.get(device_type)
@@ -401,7 +405,7 @@ child_dag_name,
 		ss_data = []
 		for devices in devices_data_dict:
 			devices = eval(devices)
-			devices['site'] = site_name
+			devices['site'] = devices.get('site_name')
 			devices['device_type'] = device_type
 
 			for service in services: #loop for the all the configured services
@@ -423,7 +427,7 @@ child_dag_name,
 			ss_data.append(devices.copy())
 			
 		ss_ul_issue_list.append(ip_ul_mapper.copy())
-		redis_hook_6.rpush("calculated_ss_ul_issue_%s_%s"%(device_type,site_name),ss_data)
+		redis_hook_6.rpush("calculated_ss_ul_issue_%s_%s"%(device_type,machine_name),ss_data)
 		redis_hook_6.rpush("calculated_ss_ul_issue_kpi",ss_ul_issue_list)
 
 	def aggregate_ul_issue_data(*args,**kwargs):
@@ -447,10 +451,9 @@ child_dag_name,
 
 	machine_names = set([site.split("_")[0] for site in union_sites])
 	config_machines = set([site.split("_")[0] for site in config_sites])
-	aggregate_dependency_ss = {}
-	aggregate_dependency_bs = {}
-	ss_calc_task_list = []
-	bs_calc_task_list = []
+	
+	ss_calc_task_list = {}
+	bs_calc_task_list = {}
 	
 	#TODo Remove this if ss >> bs task
 	# calculate_ul_issue_lost_ss_bs_task = PythonOperator(
@@ -470,7 +473,9 @@ child_dag_name,
 				python_callable=aggregate_ul_issue_data,
 				params={"machine_name":each_machine_name,'type':'ss'},
 				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue
+				queue = celery_queue,
+				trigger_rule = 'all_done'
+
 				)
 			aggregate_ul_issue_data_bs_task = PythonOperator(
 				task_id = "aggregate_ul_issue_bs_%s"%each_machine_name,
@@ -478,11 +483,60 @@ child_dag_name,
 				python_callable=aggregate_ul_issue_data,
 				params={"machine_name":each_machine_name,'type':'bs'},
 				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue
+				queue = celery_queue,
+				trigger_rule = 'all_done'
+				)
+			calculate_utilization_data_ss_task = PythonOperator(
+				task_id = "calculate_ss_ul_issue_kpi_of_%s"%each_machine_name,
+				provide_context=True,
+				trigger_rule = 'all_done',
+				python_callable=calculate_ul_issue_data_ss,
+				params={"machine_name":each_machine_name,"technology":ss_name},
+				dag=ul_issue_kpi_subdag_dag,
+				queue = celery_queue,
+				
+				
+				)
+			calculate_utilization_data_bs_task = PythonOperator(
+				task_id = "calculate_bs_ul_issue_kpi_of_%s"%each_machine_name,
+				provide_context=True,
+				python_callable=calculate_ul_issue_data_bs,
+				trigger_rule = 'all_done',
+				params={"machine_name":each_machine_name,"technology":bs_name,"lost_n_found":False},
+				dag=ul_issue_kpi_subdag_dag,
+				queue = celery_queue,
+				
+				
+				)
+			format_data_ss_task = PythonOperator(
+				task_id = "format_data_of_ss_%s"%each_machine_name,
+				provide_context=True,
+				python_callable=format_ss_data,
+				trigger_rule = 'all_done',
+				params={"machine_name":each_machine_name,"technology":ss_name},
+				dag=ul_issue_kpi_subdag_dag,
+				queue = celery_queue,
+				
+				
+				)
+			format_data_bs_task = PythonOperator(
+				task_id = "format_data_of_bs_%s"%each_machine_name,
+				provide_context=True,
+				python_callable=format_bs_data,
+				trigger_rule = 'all_done',
+				params={"machine_name":each_machine_name,"technology":bs_name},
+				dag=ul_issue_kpi_subdag_dag,
+				queue = celery_queue,
+				
+				
 				)
 			
-			aggregate_dependency_ss[each_machine_name] = aggregate_ul_issue_data_ss_task
-			aggregate_dependency_bs[each_machine_name] = aggregate_ul_issue_data_bs_task
+			format_data_ss_task >> aggregate_ul_issue_data_ss_task
+			format_data_bs_task >> aggregate_ul_issue_data_bs_task
+			ss_calc_task_list[each_machine_name] = calculate_utilization_data_ss_task
+			bs_calc_task_list[each_machine_name] = calculate_utilization_data_bs_task
+			calculate_utilization_data_ss_task >> format_data_ss_task
+			calculate_utilization_data_bs_task >> format_data_bs_task
 			device_tech = {'ss':ss_name,'bs':bs_name}
 			
 			#we gotta create teh crazy queries WTF this is so unsafe
@@ -547,80 +601,51 @@ child_dag_name,
 				queue = celery_queue,
 				
 				)
-			calculate_utilization_data_ss_task = PythonOperator(
-				task_id = "calculate_ss_ul_issue_kpi_of_%s"%each_site_name,
-				provide_context=True,
-				trigger_rule = 'all_done',
-				python_callable=calculate_ul_issue_data_ss,
-				params={"site_name":each_site_name,"technology":ss_name},
-				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue,
-				
-				)
-			calculate_utilization_data_bs_task = PythonOperator(
-				task_id = "calculate_bs_ul_issue_kpi_of_%s"%each_site_name,
-				provide_context=True,
-				python_callable=calculate_ul_issue_data_bs,
-				trigger_rule = 'all_done',
-				params={"site_name":each_site_name,"technology":bs_name,"lost_n_found":False},
-				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue,
-				
-				)
-			format_data_ss_task = PythonOperator(
-				task_id = "format_data_of_ss_%s"%each_site_name,
-				provide_context=True,
-				python_callable=format_ss_data,
-				trigger_rule = 'all_done',
-				params={"site_name":each_site_name,"technology":ss_name},
-				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue,
-				
-				)
-			format_data_bs_task = PythonOperator(
-				task_id = "format_data_of_bs_%s"%each_site_name,
-				provide_context=True,
-				python_callable=format_bs_data,
-				trigger_rule = 'all_done',
-				params={"site_name":each_site_name,"technology":bs_name},
-				dag=ul_issue_kpi_subdag_dag,
-				queue = celery_queue,
-				
-				)
 			
-
-			get_required_data_ss_task >> calculate_utilization_data_ss_task
-			calculate_utilization_data_ss_task >> format_data_ss_task
-			#calculate_utilization_data_ss_task >> calculate_utilization_data_bs_task
-			ss_calc_task_list.append(calculate_utilization_data_ss_task)
-			bs_calc_task_list.append(calculate_utilization_data_bs_task)
-			calculate_utilization_data_bs_task >> format_data_bs_task
-			get_required_data_bs_task >> calculate_utilization_data_bs_task
+			
+			machine=each_site_name.split("_")[0]
+			get_required_data_ss_task >> ss_calc_task_list.get(machine)
+			
+			
+			get_required_data_bs_task >> bs_calc_task_list.get(machine)
 
 			machine_name = each_site_name.split("_")[0]
-			try:
+			# try:
 				
-				aggregate_dependency_ss[machine_name] << format_data_ss_task
-				aggregate_dependency_bs[machine_name] << format_data_bs_task
-			except:
-				logging.info("Site Not Found %s"%(machine_name))
-				pass
+			# 	aggregate_dependency_ss[machine_name] << format_data_ss_task
+			# 	aggregate_dependency_bs[machine_name] << format_data_bs_task
+			# except:
+			# 	logging.info("Site Not Found %s"%(machine_name))
+			# 	pass
 
 		
 		else:
 			logging.info("Skipping %s"%(each_site_name))
 
 
-
-	for bs in bs_calc_task_list:
-		for ss in ss_calc_task_list:
+	if set_dependency_for_ss_on_all_machines:
+		for bs in bs_calc_task_list:
+			for ss in ss_calc_task_list:
+				try:
+					bs_task = bs_calc_task_list.get(bs)
+					ss_task =ss_calc_task_list.get(ss)
+					#print "%s << %s"%(bs,ss)
+					bs_task << ss_task
+				except:
+					#print "EXCEPTION %s << %s"%(bs,ss)
+					print "Exception"
+					pass
+	else:
+		for bs in bs_calc_task_list:
 			try:
+				bs_task = bs_calc_task_list.get(bs)
+				ss_task =ss_calc_task_list.get(bs)
 				#print "%s << %s"%(bs,ss)
-				bs << ss
+				bs_task << ss_task
 			except:
 				#print "EXCEPTION %s << %s"%(bs,ss)
 				print "Exception"
-				pass
+				pass	
 	
 
 	return ul_issue_kpi_subdag_dag

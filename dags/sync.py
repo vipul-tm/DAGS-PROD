@@ -13,6 +13,7 @@ from airflow.models import Variable
 from airflow.operators import TriggerDagRunOperator
 from airflow.operators.subdag_operator import SubDagOperator
 from pprint import pprint
+from copy import deepcopy
 import itertools
 import socket
 import sys
@@ -59,8 +60,16 @@ def get_host_ip_mapping():
 		return None
 	except Exception:
 		logging.error("Please check the HostMK file exists on the path provided ")
+		traceback.print_exc()
 		return None
 
+def remove_duplicates(input_list):
+	newlist = []
+	for i in input_list:
+		if i not in newlist:
+			newlist.append(i)
+
+	return newlist
 
 def load_file(file_path):
 	#Reset the global vars
@@ -126,9 +135,8 @@ def process_host_mk():
 		Variable.set("hostmk.dict",str(device_dict))
 
 		for site_mapping in all_site_mapping:
-			if site_mapping.get('device_type') not in  tech_wise_device_site_mapping.keys():
+			if site_mapping.get('device_type') not in  tech_wise_device_site_mapping.keys():				
 				tech_wise_device_site_mapping[site_mapping.get('device_type')] = {site_mapping.get('site'):[{"hostname":site_mapping.get('hostname'),"ip_address":host_ip_mapping.get(site_mapping.get('hostname'))}]}
-
 			else:
 				if site_mapping.get('site') not in  tech_wise_device_site_mapping.get(site_mapping.get('device_type')).keys():
 					tech_wise_device_site_mapping.get(site_mapping.get('device_type'))[site_mapping.get('site')] = [{"hostname":site_mapping.get('hostname'),"ip_address":host_ip_mapping.get(site_mapping.get('hostname'))}]
@@ -340,70 +348,251 @@ def generate_backhaul_inventory_for_util():
 	device_device.host_state <> 'Disable'
 	and
 	device_devicetype.name in ('Cisco','Juniper','RiCi', 'PINE','Huawei','PE')
-	group by device_device.ip_address;
+	group by device_device.ip_address;	
 	"""
-
-	backhaul_data = execute_query(backhaul_inventory_data_query)
+	switch_query="select device_device.device_name, site_instance_siteinstance.name, device_device.ip_address, device_devicetype.name, device_devicetechnology.name as techno_name, group_concat(service_servicedatasource.name separator '$$') as port_name, group_concat(inventory_basestation.bh_port_name separator '$$') as port_alias, group_concat(inventory_basestation.bh_capacity separator '$$') as port_wise_capacity from device_device inner join (device_devicetechnology, device_devicetype, machine_machine, site_instance_siteinstance) on ( device_devicetype.id = device_device.device_type and device_devicetechnology.id = device_device.device_technology and machine_machine.id = device_device.machine_id and site_instance_siteinstance.id = device_device.site_instance_id ) inner join (inventory_backhaul) on (device_device.id = inventory_backhaul.bh_configured_on_id OR device_device.id = inventory_backhaul.aggregator_id OR device_device.id = inventory_backhaul.pop_id OR device_device.id = inventory_backhaul.bh_switch_id) left join (inventory_basestation) on (inventory_backhaul.id = inventory_basestation.backhaul_id) left join (service_servicedatasource) on (inventory_basestation.bh_port_name = service_servicedatasource.alias) where device_device.is_deleted=0 and device_device.host_state <> 'Disable' and device_devicetype.name in ('RiCi', 'PINE') group by device_device.ip_address;".strip()
 	
+	backhaul_query = """
+	select
+	bh_device.device_name,
+	site_instance_siteinstance.name,
+	bh_device.ip_address,
+	dtype.name as device_type,
+	GROUP_CONCAT(bs.bh_port_name separator ',') as bh_ports,
+	GROUP_CONCAT(sds.name separator ',') as service_alias,
+	group_concat(bs.bh_capacity separator ',') as port_wise_capacity 
+	from
+	inventory_basestation as bs
+	left join
+	inventory_backhaul as bh
+	on
+	bs.backhaul_id = bh.id
+	left join
+	device_device as bh_device
+	ON
+	bh_device.id = bh.bh_configured_on_id
+	left join
+	device_devicetype as dtype
+	ON
+	dtype.id = bh_device.device_type
+	left join
+	service_servicedatasource as sds
+	ON
+	lower(sds.name) = lower(bs.bh_port_name)
+	OR
+	lower(sds.alias) = lower(bs.bh_port_name)
+	OR
+	lower(sds.name) = lower(replace(bs.bh_port_name, '/', '_'))
+	OR
+	lower(sds.alias) = lower(replace(bs.bh_port_name, '/', '_'))
+	left join 
+	(machine_machine,site_instance_siteinstance)
+	on
+	(
+	machine_machine.id = bh_device.machine_id and site_instance_siteinstance.id = bh_device.site_instance_id
+	)
+	WHERE
+	lower(dtype.name) in ('juniper', 'cisco','huawei')
+	group by
+	bh_device.id;
+    """
+	#backhaul_data = execute_query(backhaul_inventory_data_query)
+
+	backhaul_query_data = execute_query(backhaul_query)
+	converter_query_data = execute_query(switch_query)
+	print "Length Recieved BH: %s SW:%s"%(len(backhaul_query_data),len(converter_query_data))
+	all_data={}
 	bh_cap_mappng = {}
-	for device in backhaul_data:
-		dev_name = device.get('device_name')
+	backhaul_cap_mappng = {}
+	backhaul_cap_mappng_list = []
+	converter_cap_mapping = {}
+	converter_cap_mapping_list = []
+	all_capacity_list = []
+	for b_device in backhaul_query_data:
+		dev_name = b_device.get('device_name')
 		 
-		bh_cap_mappng[device.get('device_name')] = {
-		 'port_name' : device.get('port_name').split("$$") if device.get('port_name') else None,
-		 'port_wise_capacity': device.get('port_wise_capacity').split("$$") if device.get('port_wise_capacity') else None,
-		 'ip_address':device.get('ip_address'),
-		 'port_alias':device.get('port_alias').split("$$") if device.get('port_alias') else None,
-		 'capacity': {}
+		backhaul_cap_mappng[b_device.get('device_name')] = {
+		 'port_name' : filter(None,b_device.get('bh_ports').split(",")) if b_device.get('bh_ports') else None,
+		 'port_wise_capacity': filter(None,b_device.get('port_wise_capacity').split(",")) if b_device.get('port_wise_capacity') else None,
+		 'ip_address':b_device.get('ip_address'),
+		 'port_alias':filter(None,b_device.get('service_alias').split(",")) if b_device.get('service_alias') else None,
+		 'capacity': {},
+		 'name':dev_name
 		 }
+
+		for index,port in enumerate(backhaul_cap_mappng.get(dev_name).get("port_name")):
+		 	if len(b_device.get("port_wise_capacity")) == 1:
+		 		capacity = b_device.get("port_wise_capacity")
+		 		backhaul_cap_mappng.get(dev_name).get("capacity").update({port:capacity})
+		 	else:
+		 		capacity = b_device.get("port_wise_capacity")
+		 		backhaul_cap_mappng.get(dev_name).get("capacity").update({port:capacity})
+
+		all_data[dev_name] = backhaul_cap_mappng.get(dev_name).copy()
+		backhaul_cap_mappng_list.append(backhaul_cap_mappng.copy())
+
+	print "TOTAL Device processes %s"%(len(backhaul_cap_mappng_list))
+
+	for b_device in converter_query_data:
+		dev_name = b_device.get('device_name')
+		 
+		converter_cap_mapping[dev_name] = {
+		 'port_name' : filter(None,b_device.get('port_name').split(",")) if b_device.get('port_name') else None,
+		 'port_wise_capacity': filter(None,b_device.get('port_wise_capacity').split(",")) if b_device.get('port_wise_capacity') else None,
+		 'ip_address':b_device.get('ip_address'),
+		 'port_alias':filter(None,b_device.get('port_alias').split(",")) if b_device.get('port_alias') else None,
+		 'capacity': {},
+		 'name':dev_name
+		 }
+		if converter_cap_mapping.get(dev_name).get("port_name") and converter_cap_mapping.get(dev_name).get("port_name") != None:
+			for index,port in enumerate(converter_cap_mapping.get(dev_name).get("port_name")):
+			 	if len(b_device.get("port_wise_capacity")) == 1:
+			 		capacity = b_device.get("port_wise_capacity")
+			 		converter_cap_mapping.get(dev_name).get("capacity").update({port:capacity})
+			 	else:
+			 		capacity = b_device.get("port_wise_capacity")
+			 		converter_cap_mapping.get(dev_name).get("capacity").update({port:capacity})
+
+		all_data[dev_name] = converter_cap_mapping.get(dev_name).copy()
+		converter_cap_mapping_list.append(converter_cap_mapping.copy())
+
+	backhaul_cap_mappng_list.extend(converter_cap_mapping_list)
+	
+	print backhaul_cap_mappng_list[0:10],type(backhaul_cap_mappng_list[0])
+
+
+	print "FINAL LENGTH --> %s %s"%(len(all_data.keys()),type(all_data))
+	#print backhaul_cap_mappng_list
+	#print ("FINAL LENGTH : %s"%(len(all_data.keys())))
+	# print "TOTAL Device processes %s"%(len(backhaul_cap_mappng_list))
+
+	# print "BH --> Prev %s: Now:%s CON: ---- > Prev: %s Now: %s  "%(len(backhaul_query_data),len(backhaul_cap_mappng_list),len(converter_query_data),len(converter_cap_mapping_list))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	# for device in backhaul_data:
+	# 	dev_name = device.get('device_name')
+		 
+	# 	bh_cap_mappng[device.get('device_name')] = {
+	# 	 'port_name' : filter(None,device.get('port_name').split(",")) if device.get('port_name') else None,
+	# 	 'port_wise_capacity': filter(None,device.get('port_wise_capacity').split("$$")) if device.get('port_wise_capacity') else None,
+	# 	 'ip_address':device.get('ip_address'),
+	# 	 'port_alias':filter(None,device.get('port_alias').split("$$")) if device.get('port_alias') else None,
+	# 	 'capacity': {}
+	# 	 }
+
+
+
+
+
+
+	# 	for name_and_alias in ['port_alias','port_name']:
+			
+	# 		if device.get(name_and_alias) and device.get('port_wise_capacity'):
+	# 			for  index,port in enumerate(remove_duplicates(bh_cap_mappng.get(device.get('device_name')).get(name_and_alias))):				
+					
+	# 				port_capacity = None
+	# 				ports=[]
+	# 				try:
+	# 					if "," in port:
+	# 						ports.extend(port.split(','))
+	# 					else:
+	# 						ports.append(port)
+
+	# 					port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index]
+	# 				except IndexError:
+	# 					logging.error("Error Encounterd while assigning for %s"%(device.get('device_name')))
+	# 					logging.error(bh_cap_mappng.get(device.get('device_name')).get(name_and_alias))
+	# 				except Exception:
+	# 					logging.error("GeneralException Encounterd while assigning for %s"%(device.get('device_name')))
+	# 					port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[0]
+
+
+
+	# 				for port in ports:
+	# 					port=port.strip()
+						
+	# 					if port not in bh_cap_mappng.get(device.get('device_name')).get('capacity').keys():
+	# 		 				bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port:port_capacity})
+
+	
+
+	# print "Setting redis Key backhaul_capacities with backhaul capacities "
+	# #for dev in bh_cap_mappng:
+	# #bh_cap_mappng.get('10561').get('capacity').update({'GigabitEthernet0_0_25':'100','GigabitEthernet0_0_26':'100'})
+	# #bh_cap_mappng.get('11389').get('capacity').update({'GigabitEthernet0_0_24':'44'})
+	
+	# #print bh_cap_mappng
+
+	# for dev in bh_cap_mappng:
 		
-		if device.get('port_name') and device.get('port_wise_capacity'):
-			for  index,port in enumerate(bh_cap_mappng.get(device.get('device_name')).get('port_name')):
-				#print index,bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity'),device.get('port_name')
-				try:
-					port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index]
-				except IndexError:
-					try:
-						port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index-1]
-					except Exception:
-						port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[0]
-				except Exception:
-					port_capacity = bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[0]
-
-		 		bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port:port_capacity})
-
+	# 	try:
+	# 		cap=bh_cap_mappng.get(dev).get('port_wise_capacity')
+	# 		p_alias = bh_cap_mappng.get(dev).get('port_alias')
+	# 		p_name =bh_cap_mappng.get(dev).get('port_name')  if bh_cap_mappng.get(dev).get('port_name') != None else []
+	# 		if (len(cap) == len(p_name)) or (len(cap) == len(p_alias)):
+	# 			for index,port_alias in enumerate(p_alias):
+	# 				try:
+	# 					if "," in port_alias:
+	# 						alias_ports_after_split = port_alias.split(",")
+	# 						for port_spitted in alias_ports_after_split:
+	# 							bh_cap_mappng.get(dev).get('capacity').update({port_spitted:cap[index]})
+	# 					else:		
+	# 						bh_cap_mappng.get(dev).get('capacity').update({port_alias:cap[index]})
+	# 						bh_cap_mappng.get(dev).get('capacity').update({p_name[index]:cap[index]})
+	# 				except Exception:
+	# 					print "EXCEPTION ---> 1"
+	# 					pprint(bh_cap_mappng.get(dev))
+	# 					print "==============================="
+	# 					continue
+	# 		else :
+	# 			if len(cap) ==1 and len(port_alias) == 2:
+	# 				bh_cap_mappng.get(dev).get('capacity').update({p_alias[0]:cap[0]})
+	# 				bh_cap_mappng.get(dev).get('capacity').update({p_alias[1]:cap[0]})
+	# 			elif len(cap) ==1 and len(port_name) == 2:
+	# 				backhaul_cap_mappng.get(dev).get('capacity').update({port_name[0]:cap[0]})
+	# 				bh_cap_mappng.get(dev).get('capacity').update({port_name[1]:cap[0]})
+	# 			else:
+	# 				print "------------------------------------------"
+	# 				pprint(bh_cap_mappng.get(dev))
+	# 				print "------------------------------------------"
 				
-		for key_dic in ['port_alias']:			
-			if bh_cap_mappng.get(dev_name).get(key_dic) and len(bh_cap_mappng.get(dev_name).get(key_dic)) > 1:
-				new_ports = []
-				
-				for index_m,port_v in enumerate(bh_cap_mappng.get(dev_name).get(key_dic)):					
-					if ',' in port_v:
-						
-						def_ports = port_v.split(',')
-						
-						new_ports.extend(def_ports)
-						for port in def_ports:
-							try:
-								bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port:bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index_m]})
-							except Exception:
-								bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port:bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index_m]})
-					else:	
-						new_ports.append(port_v)
-						try:
-							bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port_v:bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index_m]})
-						except Exception:
-							print bh_cap_mappng.get(dev_name).get(key_dic)
-							bh_cap_mappng.get(device.get('device_name')).get('capacity').update({port_v:bh_cap_mappng.get(device.get('device_name')).get('port_wise_capacity')[index_m-1]})
+	# 	except Exception:
+	# 		print  "++++++++++++++++++++++++++++++++++"
+	# 		pprint(bh_cap_mappng.get(dev))
+	# 		traceback.print_exc()
+	# 		print "+++++++++++++++++++++++++++++++++++"
 
-				bh_cap_mappng.get(dev_name)[key_dic] = new_ports
 
-				
+	# print bh_cap_mappng.get('12478').get('capacity')
+	# bh_cap_mappng.get('10157').get('capacity')['GigabitEthernet0/0/24'] = '28'
+	# bh_cap_mappng.get('10157').get('capacity')['GigabitEthernet0_0_24'] = '28'
+	# bh_cap_mappng.get('12478').get('capacity')['ge-0_1_2'] = '1000'
+	# bh_cap_mappng.get('12478').get('capacity')['ge-0/1/2'] = '1000'
+	# print bh_cap_mappng.get('12478').get('capacity')
 
-	print "Setting redis Key backhaul_capacities with backhaul capacities "
-	#for dev in bh_cap_mappng:
-	#	print bh_cap_mappng.get(dev).get('capacity')
-	redis_hook_2.set("backhaul_capacities",str(bh_cap_mappng))
+	redis_hook_2.set("backhaul_capacities",str(all_data))
+	
 	print "Successfully Created Key: backhaul_capacities in Redis. "
 
 

@@ -176,6 +176,7 @@ def calculate_radwin5k_bs_and_ss_dyn_tl_kpi(utilization):
 
 def calculate_backhaul_utilization(utilization,hostname): #hostname is required for backhaul devices so as to get capacity for the devices
 	#capacity=backhaul_inventory.get(hostname).get('port_wise_capacity')
+	
 	device_port = backhaul_inventory.get(hostname)
 	if device_port and device_port != None:
 		capacity = device_port.get("capacity")
@@ -184,34 +185,57 @@ def calculate_backhaul_utilization(utilization,hostname): #hostname is required 
 	utilization=eval(str(utilization))
 	
 	if utilization and utilization != None and utilization != []:
+		
 		try:
 
 			utilization = dict(utilization)
 		except Exception:
-			print "We have an exception while getting utilizatio %s"%(utilization)
+			print "We have an exception while getting utilization %s"%(utilization)
 			
 		all_ports_kpi_utilization = {}
 		for port_name in utilization.keys():
+			port_name = port_name.strip()
 			data_source = port_name+"_kpi"
 			current_util = utilization.get(port_name)						 
+			
 			try:
 				
+				capacity_key = None
 				if capacity.get(port_name) and capacity.get(port_name) != None:
 					capacity_key = port_name 
 				else:
-					capacity_key = port_name.replace("_","/")
+					
+					
+					if "_" in port_name: 				#Edit 20-dec-17 This is done to prevent wrong BH Entries WTF Tachardiya Fix
+						capacity_key = port_name.replace("_","/")
+					elif "/" in port_name:
+						capacity_key = port_name.replace("/","_")
+					
+					
+						#Edit 20-Dec-17 Quick Fix to get the correct BH Values
+				
+				if not (capacity.get(capacity_key) and capacity.get(capacity_key) != None):
+					if "gi" in port_name:
+						port_int_values = port_name.split("gi")[1].replace("_","/")
+						capacity_key = "GigabitEthernet"+str(port_int_values)
+					elif "fa" in port_name:
+						port_int_values = port_name.split("fa")[1].replace("_","/")
+						capacity_key = "FastEthernet"+str(port_int_values)
 
 				if capacity.get(capacity_key) and capacity.get(capacity_key) != None:
-					#print current_util,capacity.get(capacity_key),capacity_key,capacity
-					utilization_kpi = (float(current_util)/float(capacity.get(capacity_key))) *100
+					#print current_util,capacity.get(capacity_key),capacity_key,capacity					
+					utilization_kpi = (float(current_util)/float(capacity.get(capacity_key))) *100.00
 					utilization_kpi = round(utilization_kpi,2)
 					all_ports_kpi_utilization.update({data_source:utilization_kpi})
 				else:
-					utilization_kpi = (float(current_util)/float(1000)) *100
+					logging.error("IN ELSEEEEEE========= %s->>%s"%(capacity,capacity_key))
+					utilization_kpi = (float(current_util)/float(1000)) *100.00
 					utilization_kpi = round(utilization_kpi,2)
 					all_ports_kpi_utilization.update({data_source:utilization_kpi})
 			except Exception,e:
+				print "In exception"
 				all_ports_kpi_utilization.update({data_source:None})
+				traceback.print_exc()
 				continue
 		
 		return all_ports_kpi_utilization
